@@ -1,0 +1,78 @@
+from flask import Flask, render_template, request, redirect, url_for, session
+import json
+import os
+from math import sqrt
+from numpy import dot
+from numpy.linalg import norm
+
+app = Flask(__name__)
+app.secret_key = 'supersecretkey'
+
+# Sample grocery items with ingredients
+grocery_items = {
+    "Chicken Curry": {"chicken", "onion", "garlic", "spices"},
+    "Veg Salad": {"lettuce", "tomato", "onion", "cucumber"},
+    "Fruit Yogurt": {"yogurt", "strawberry", "sugar"},
+    "Pasta Alfredo": {"pasta", "cheese", "milk", "garlic"}
+}
+
+# User ratings: user_id -> {item_name: rating}
+user_ratings = {
+    "user1": {"Chicken Curry": 5, "Veg Salad": 2},
+    "user2": {"Chicken Curry": 4, "Pasta Alfredo": 5, "Fruit Yogurt": 3},
+    "user3": {"Veg Salad": 4, "Fruit Yogurt": 5, "Pasta Alfredo": 2}
+}
+
+def cosine_similarity(u1, u2):
+    items = set(u1.keys()) & set(u2.keys())
+    if not items:
+        return 0
+    v1 = [u1[i] for i in items]
+    v2 = [u2[i] for i in items]
+    return dot(v1, v2) / (norm(v1) * norm(v2))
+
+@app.route('/', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form['username']
+        dislikes = request.form['dislikes'].split(',')
+        session['user'] = username.strip()
+        session['dislikes'] = set(d.strip().lower() for d in dislikes)
+        return redirect(url_for('recommend'))
+    return render_template('login.html')
+
+@app.route('/recommend')
+def recommend():
+    user = session.get('user')
+    dislikes = session.get('dislikes', set())
+
+    # Get user similarity
+    target_ratings = user_ratings.get(user, {})
+    similarities = {}
+    for other_user, ratings in user_ratings.items():
+        if other_user != user:
+            similarities[other_user] = cosine_similarity(target_ratings, ratings)
+
+    # Predict ratings
+    predicted = {}
+    for item in grocery_items:
+        if item not in target_ratings:
+            num, den = 0, 0
+            for other_user, sim in similarities.items():
+                if item in user_ratings[other_user]:
+                    num += sim * user_ratings[other_user][item]
+                    den += sim
+            if den:
+                predicted[item] = num / den
+
+    # Filter out disliked ingredients
+    final_recommendations = {
+        item: score for item, score in predicted.items()
+        if not (grocery_items[item] & dislikes)
+    }
+
+    sorted_recommendations = sorted(final_recommendations.items(), key=lambda x: x[1], reverse=True)
+    return render_template('recommend.html', recommendations=sorted_recommendations)
+
+if __name__ == '__main__':
+    app.run(debug=True)
